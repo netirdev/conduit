@@ -4,26 +4,6 @@ Command-line interface for running a Psiphon Conduit node - a volunteer-run prox
 
 ## Quick Start
 
-Want to run a Conduit station? Get the latest CLI release: https://github.com/Psiphon-Inc/conduit/releases
-
-Our official CLI releases include an embedded psiphon config.
-
-Contact Psiphon (conduit-oss@psiphon.ca) to discuss custom configuration values.
-
-Conduit deployment guide: [GUIDE.md](./GUIDE.md)
-
-## Docker
-
-Use the official Docker image, which includes an embedded Psiphon config. Docker Compose is a convenient way to run Conduit if you prefer a declarative setup.
-
-```bash
-docker compose up
-```
-
-The compose file enables Prometheus metrics on `:9090` inside the container. To scrape from the host, publish the port or run Prometheus on the same Docker network and scrape `conduit:9090`.
-
-## Building From Source
-
 ```bash
 # First time setup (clones required dependencies)
 make setup
@@ -40,38 +20,36 @@ make build
 - **Go 1.24.x** (Go 1.25+ is not supported due to psiphon-tls compatibility)
 - Psiphon network configuration file (JSON)
 
-The Makefile will automatically install Go 1.24.12 if not present.
+The Makefile will automatically install Go 1.24.3 if not present.
+
+## Configuration
+
+Conduit requires a Psiphon network configuration file containing connection parameters. See `psiphon_config.example.json` for the expected format.
+
+Contact Psiphon (info@psiphon.ca) to obtain valid configuration values.
 
 ## Usage
 
 ```bash
 # Start with default settings
-conduit start
+conduit start --psiphon-config ./psiphon_config.json
 
 # Customize limits
-conduit start --max-clients 20 --bandwidth 10
+conduit start --psiphon-config ./psiphon_config.json --max-clients 500 --bandwidth 10
 
-# Verbose output (info messages)
-conduit start -v
+# Enable debug logging
+conduit start --psiphon-config ./psiphon_config.json --verbose
 ```
 
 ### Options
 
-| Flag                   | Default  | Description                                |
-| ---------------------- | -------- | ------------------------------------------ |
-| `--psiphon-config, -c` | -        | Path to Psiphon network configuration file |
-| `--max-clients, -m`    | 50       | Maximum concurrent clients                 |
-| `--bandwidth, -b`      | 40       | Bandwidth limit per peer in Mbps           |
-| `--data-dir, -d`       | `./data` | Directory for keys and state               |
-| `--metrics-addr`       | -        | Prometheus metrics listen address          |
-| `-v`                   | -        | Verbose output                             |
-
-## Data Directory
-
-Keys and state are stored in the data directory (default: `./data`):
-
-- `conduit_key.json` - Node identity keypair
-  The Psiphon broker tracks proxy reputation by key. Always use a persistent volume to preserve your key across container restarts, otherwise you'll start with zero reputation and may not receive client connections for some time.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--psiphon-config, -c` | - | Path to Psiphon network configuration file |
+| `--max-clients, -m` | 200 | Maximum concurrent clients (1-1000) |
+| `--bandwidth, -b` | 5 | Bandwidth limit per peer in Mbps (1-40) |
+| `--data-dir, -d` | `./data` | Directory for keys and state |
+| `--verbose, -v` | false | Enable debug logging |
 
 ## Building
 
@@ -94,3 +72,63 @@ make build-windows     # Windows amd64
 ```
 
 Binaries are output to `dist/`.
+
+## Data Directory
+
+Keys and state are stored in the data directory (default: `./data`):
+- `conduit_key.json` - Node identity keypair
+
+## Running as a System Service
+
+Conduit can be installed as a system service for automatic startup on boot.
+
+### Linux (systemd)
+
+```bash
+sudo conduit service install --psiphon-config /path/to/psiphon_config.json
+sudo conduit service start
+sudo conduit service status
+sudo conduit service logs      # View logs (follows journalctl)
+sudo conduit service stop
+sudo conduit service uninstall
+```
+
+### macOS (launchd)
+
+```bash
+# As root (system-wide daemon)
+sudo conduit service install --psiphon-config /path/to/psiphon_config.json
+sudo conduit service start
+
+# Or as current user (user agent)
+conduit service install --psiphon-config /path/to/psiphon_config.json
+conduit service start
+```
+
+### Windows (Windows Service)
+
+Run Command Prompt or PowerShell as Administrator:
+
+```powershell
+conduit service install --psiphon-config C:\path\to\psiphon_config.json
+conduit service start
+conduit service status
+conduit service logs
+conduit service stop
+conduit service uninstall
+```
+
+### Service Options
+
+Configuration options can be specified at install time:
+
+```bash
+conduit service install \
+  --psiphon-config /path/to/config.json \
+  --max-clients 500 \
+  --bandwidth 10
+```
+
+## License
+
+GNU General Public License v3.0

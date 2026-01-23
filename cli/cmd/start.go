@@ -24,21 +24,18 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/conduit"
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
-	"github.com/Psiphon-Inc/conduit/cli/internal/logging"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
 	maxClients        int
 	bandwidthMbps     float64
 	psiphonConfigPath string
-	statsFilePath     string
-	metricsAddr       string
 )
 
 var startCmd = &cobra.Command{
@@ -62,11 +59,12 @@ func init() {
 	rootCmd.AddCommand(startCmd)
 
 	startCmd.Flags().IntVarP(&maxClients, "max-clients", "m", config.DefaultMaxClients, "maximum number of proxy clients (1-1000)")
-	startCmd.Flags().Float64VarP(&bandwidthMbps, "bandwidth", "b", config.DefaultBandwidthMbps, "total bandwidth limit in Mbps (-1 for unlimited)")
-	startCmd.Flags().StringVarP(&statsFilePath, "stats-file", "s", "", "persist stats to JSON file (default: stats.json in data dir if flag used without value)")
-	startCmd.Flags().Lookup("stats-file").NoOptDefVal = "stats.json"
-	startCmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "address for Prometheus metrics endpoint (e.g., :9090 or 127.0.0.1:9090)")
-	startCmd.Flags().StringVarP(&psiphonConfigPath, "psiphon-config", "c", "", "path to Psiphon network config file (JSON)")
+	startCmd.Flags().Float64VarP(&bandwidthMbps, "bandwidth", "b", config.DefaultBandwidthMbps, "bandwidth limit per peer in Mbps (1-40)")
+
+	// Only show --psiphon-config flag if no config is embedded
+	if !config.HasEmbeddedConfig() {
+		startCmd.Flags().StringVarP(&psiphonConfigPath, "psiphon-config", "c", "", "path to Psiphon network config file (JSON)")
+	}
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -87,41 +85,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("psiphon config required: use --psiphon-config flag or build with embedded config")
 	}
 
-	// Resolve stats file path - if relative, place in data dir
-	resolvedStatsFile := statsFilePath
-	if resolvedStatsFile != "" && !filepath.IsAbs(resolvedStatsFile) {
-		resolvedStatsFile = filepath.Join(GetDataDir(), resolvedStatsFile)
-	}
-
-	maxClientsFromFlag := 0
-	if cmd.Flags().Changed("max-clients") {
-		if maxClients < 1 {
-			return fmt.Errorf("max-clients must be between 1 and %d", config.MaxClientsLimit)
-		}
-		maxClientsFromFlag = maxClients
-	}
-
-	bandwidthFromFlag := 0.0
-	bandwidthFromFlagSet := false
-	if cmd.Flags().Changed("bandwidth") {
-		if bandwidthMbps != config.UnlimitedBandwidth && bandwidthMbps < 1 {
-			return fmt.Errorf("bandwidth must be at least 1 Mbps (or -1 for unlimited)")
-		}
-		bandwidthFromFlag = bandwidthMbps
-		bandwidthFromFlagSet = true
-	}
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Load or create configuration (auto-generates keys on first run)
 	cfg, err := config.LoadOrCreate(config.Options{
 		DataDir:           GetDataDir(),
 		PsiphonConfigPath: effectiveConfigPath,
 		UseEmbeddedConfig: useEmbedded,
-		MaxClients:        maxClientsFromFlag,
-		BandwidthMbps:     bandwidthFromFlag,
-		BandwidthSet:      bandwidthFromFlagSet,
-		Verbosity:         Verbosity(),
-		StatsFile:         resolvedStatsFile,
-		MetricsAddr:       metricsAddr,
+		MaxClients:        maxClients,
+		BandwidthMbps:     bandwidthMbps,
+		Verbose:           IsVerbose(),
+		IsTTY:             isTTY,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -143,15 +117,44 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	go func() {
 		<-sigChan
-		logging.Println("Shutting down...")
+		if isTTY {
+			fmt.Print("\r")
+		}
+		fmt.Println("\nShutting down...")
 		cancel()
 	}()
+
+	// Print startup banner
+	if isTTY {
+		printBanner(cfg, bandwidthMbps)
+	} else {
+		fmt.Printf("Starting Psiphon Conduit (Max Clients: %d, Bandwidth: %.0f Mbps)\n", cfg.MaxClients, bandwidthMbps)
+	}
 
 	// Run the service
 	if err := service.Run(ctx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("conduit service error: %w", err)
 	}
 
-	logging.Println("Stopped.")
+	fmt.Println("Stopped.")
 	return nil
+}
+
+func printBanner(cfg *config.Config, bandwidthMbps float64) {
+	fmt.Println()
+	fmt.Println("  ┌─────────────────────────────────────────────────┐")
+	fmt.Println("  │               PSIPHON CONDUIT                   │")
+	fmt.Println("  └─────────────────────────────────────────────────┘")
+	fmt.Println()
+	fmt.Printf("  Max Clients:  %d\n", cfg.MaxClients)
+	fmt.Printf("  Bandwidth:    %.0f Mbps\n", bandwidthMbps)
+	fmt.Println()
+	fmt.Println("  Press Ctrl+C to stop")
+	fmt.Println()
+	// Print placeholder lines for the updating stats (5 lines)
+	fmt.Println("  Status:    Starting...")
+	fmt.Println("  Clients:   0")
+	fmt.Println("  Upload:    0 B")
+	fmt.Println("  Download:  0 B")
+	fmt.Println("  Uptime:    0s")
 }
