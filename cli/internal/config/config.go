@@ -129,7 +129,6 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		return nil, fmt.Errorf("max-clients must be between 1 and %d", MaxClientsLimit)
 	}
 
-<<<<<<< HEAD
 	// Resolve bandwidth: flag > config > default
 	var bandwidthBytesPerSecond int
 	if opts.BandwidthSet {
@@ -167,28 +166,6 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		} else {
 			bandwidthBytesPerSecond = int(DefaultBandwidthMbps * 1000 * 1000 / 8)
 		}
-=======
-	bandwidthMbps := opts.BandwidthMbps
-	if bandwidthMbps == 0 {
-		bandwidthMbps = DefaultBandwidthMbps
-	}
-	if bandwidthMbps != UnlimitedBandwidth && bandwidthMbps < 1 {
-		return nil, fmt.Errorf("bandwidth must be at least 1 Mbps (or -1 for unlimited)")
-	}
-
-	// Convert Mbps to bytes per second (0 means unlimited)
-	var bandwidthBytesPerSecond int
-	if bandwidthMbps == UnlimitedBandwidth {
-		bandwidthBytesPerSecond = 0 // 0 signals unlimited
-	} else {
-		bandwidthBytesPerSecond = int(bandwidthMbps * 1000 * 1000 / 8)
-	}
-
-	// Handle psiphon config source
-	var psiphonConfigData []byte
-	if opts.UseEmbeddedConfig {
-		psiphonConfigData = GetEmbeddedPsiphonConfig()
->>>>>>> 372648d (Improve bandwidth limit: increase default to 40 Mbps, add unlimited mode)
 	}
 
 	return &Config{
@@ -197,11 +174,11 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		MaxClients:              maxClients,
 		BandwidthBytesPerSecond: bandwidthBytesPerSecond,
 		DataDir:                 opts.DataDir,
-	PsiphonConfigPath:       opts.PsiphonConfigPath,
-	PsiphonConfigData:       psiphonConfigData,
-	Verbosity:               opts.Verbosity,
-	StatsFile:               opts.StatsFile,
-	MetricsAddr:             opts.MetricsAddr,
+		PsiphonConfigPath:       opts.PsiphonConfigPath,
+		PsiphonConfigData:       psiphonConfigData,
+		Verbosity:               opts.Verbosity,
+		StatsFile:               opts.StatsFile,
+		MetricsAddr:             opts.MetricsAddr,
 	}, nil
 }
 
