@@ -50,7 +50,7 @@ type Options struct {
 	MaxClients        int
 	BandwidthMbps     float64
 	BandwidthSet      bool
-	Verbosity         int    // 0=normal, 1+=verbose
+	Verbosity         int    // 0=normal, 1=verbose, 2+=debug
 	StatsFile         string // Path to write stats JSON file (empty = disabled)
 	MetricsAddr       string // Address for Prometheus metrics endpoint (empty = disabled)
 }
@@ -64,7 +64,7 @@ type Config struct {
 	DataDir                 string
 	PsiphonConfigPath       string
 	PsiphonConfigData       []byte // Embedded config data (if used)
-	Verbosity               int    // 0=normal, 1+=verbose
+	Verbosity               int    // 0=normal, 1=verbose, 2+=debug
 	StatsFile               string // Path to write stats JSON file (empty = disabled)
 	MetricsAddr             string // Address for Prometheus metrics endpoint (empty = disabled)
 }
@@ -174,11 +174,11 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		MaxClients:              maxClients,
 		BandwidthBytesPerSecond: bandwidthBytesPerSecond,
 		DataDir:                 opts.DataDir,
-		PsiphonConfigPath:       opts.PsiphonConfigPath,
-		PsiphonConfigData:       psiphonConfigData,
-		Verbosity:               opts.Verbosity,
-		StatsFile:               opts.StatsFile,
-		MetricsAddr:             opts.MetricsAddr,
+	PsiphonConfigPath:       opts.PsiphonConfigPath,
+	PsiphonConfigData:       psiphonConfigData,
+	Verbosity:               opts.Verbosity,
+	StatsFile:               opts.StatsFile,
+	MetricsAddr:             opts.MetricsAddr,
 	}, nil
 }
 
