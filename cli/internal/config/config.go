@@ -33,7 +33,7 @@ import (
 
 // Default values for CLI usage
 const (
-	DefaultMaxClients    = 50
+	DefaultMaxClients    = 200
 	DefaultBandwidthMbps = 40.0
 	MaxClientsLimit      = 1000
 	UnlimitedBandwidth   = -1.0 // Special value for no bandwidth limit
@@ -129,6 +129,7 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		return nil, fmt.Errorf("max-clients must be between 1 and %d", MaxClientsLimit)
 	}
 
+<<<<<<< HEAD
 	// Resolve bandwidth: flag > config > default
 	var bandwidthBytesPerSecond int
 	if opts.BandwidthSet {
@@ -166,6 +167,28 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		} else {
 			bandwidthBytesPerSecond = int(DefaultBandwidthMbps * 1000 * 1000 / 8)
 		}
+=======
+	bandwidthMbps := opts.BandwidthMbps
+	if bandwidthMbps == 0 {
+		bandwidthMbps = DefaultBandwidthMbps
+	}
+	if bandwidthMbps != UnlimitedBandwidth && bandwidthMbps < 1 {
+		return nil, fmt.Errorf("bandwidth must be at least 1 Mbps (or -1 for unlimited)")
+	}
+
+	// Convert Mbps to bytes per second (0 means unlimited)
+	var bandwidthBytesPerSecond int
+	if bandwidthMbps == UnlimitedBandwidth {
+		bandwidthBytesPerSecond = 0 // 0 signals unlimited
+	} else {
+		bandwidthBytesPerSecond = int(bandwidthMbps * 1000 * 1000 / 8)
+	}
+
+	// Handle psiphon config source
+	var psiphonConfigData []byte
+	if opts.UseEmbeddedConfig {
+		psiphonConfigData = GetEmbeddedPsiphonConfig()
+>>>>>>> 372648d (Improve bandwidth limit: increase default to 40 Mbps, add unlimited mode)
 	}
 
 	return &Config{
