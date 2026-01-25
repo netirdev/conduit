@@ -180,18 +180,15 @@ func LookupIPs(ips []string) ([]Result, error) {
 }
 
 func isPrivateIP(ip string) bool {
-	return strings.HasPrefix(ip, "10.") ||
-		strings.HasPrefix(ip, "172.16.") || strings.HasPrefix(ip, "172.17.") ||
-		strings.HasPrefix(ip, "172.18.") || strings.HasPrefix(ip, "172.19.") ||
-		strings.HasPrefix(ip, "172.20.") || strings.HasPrefix(ip, "172.21.") ||
-		strings.HasPrefix(ip, "172.22.") || strings.HasPrefix(ip, "172.23.") ||
-		strings.HasPrefix(ip, "172.24.") || strings.HasPrefix(ip, "172.25.") ||
-		strings.HasPrefix(ip, "172.26.") || strings.HasPrefix(ip, "172.27.") ||
-		strings.HasPrefix(ip, "172.28.") || strings.HasPrefix(ip, "172.29.") ||
-		strings.HasPrefix(ip, "172.30.") || strings.HasPrefix(ip, "172.31.") ||
-		strings.HasPrefix(ip, "192.168.") ||
-		strings.HasPrefix(ip, "127.") ||
-		ip == "0.0.0.0"
+	if strings.HasPrefix(ip, "10.") || strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "127.") {
+		return true
+	}
+	if strings.HasPrefix(ip, "172.") {
+		var b int
+		fmt.Sscanf(ip, "172.%d.", &b)
+		return b >= 16 && b <= 31
+	}
+	return false
 }
 
 func normalizeCountry(name string) string {
