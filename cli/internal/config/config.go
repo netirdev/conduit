@@ -50,6 +50,7 @@ type Options struct {
 	BandwidthMbps     float64
 	Verbosity         int    // 0=normal, 1=verbose, 2+=debug
 	StatsFile         string // Path to write stats JSON file (empty = disabled)
+	GeoEnabled        bool   // Enable geo tracking via tcpdump
 }
 
 // Config represents the validated configuration for the Conduit service
@@ -63,6 +64,7 @@ type Config struct {
 	PsiphonConfigData       []byte // Embedded config data (if used)
 	Verbosity               int    // 0=normal, 1=verbose, 2+=debug
 	StatsFile               string // Path to write stats JSON file (empty = disabled)
+	GeoEnabled              bool   // Enable geo tracking via tcpdump
 }
 
 // persistedKey represents the key data saved to disk
@@ -128,6 +130,7 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		PsiphonConfigData:       psiphonConfigData,
 		Verbosity:               opts.Verbosity,
 		StatsFile:               opts.StatsFile,
+		GeoEnabled:              opts.GeoEnabled,
 	}, nil
 }
 

@@ -52,7 +52,38 @@ conduit start --psiphon-config ./psiphon_config.json -vv
 | `--max-clients, -m` | 200 | Maximum concurrent clients (1-1000) |
 | `--bandwidth, -b` | 5 | Bandwidth limit per peer in Mbps (1-40) |
 | `--data-dir, -d` | `./data` | Directory for keys and state |
+| `--stats-file, -s` | - | Persist stats to JSON file |
+| `--geo` | false | Enable client location tracking (requires tcpdump, geoip-bin) |
 | `-v` | - | Verbose output (use `-vv` for debug) |
+
+## Geo Stats
+
+Track where your clients are connecting from:
+
+```bash
+# Requires: apt install tcpdump geoip-bin
+sudo conduit start --geo --stats-file
+```
+
+When `--geo` is enabled, the stats.json file includes client locations:
+
+```json
+{
+  "connectingClients": 5,
+  "connectedClients": 12,
+  "totalBytesUp": 1234567,
+  "totalBytesDown": 9876543,
+  "uptimeSeconds": 3600,
+  "isLive": true,
+  "geo": [
+    {"code": "IR", "country": "Iran", "count": 234},
+    {"code": "DE", "country": "Germany", "count": 45}
+  ],
+  "timestamp": "2026-01-25T15:44:00Z"
+}
+```
+
+Geo stats update every 60 seconds via tcpdump packet capture.
 
 ## Building
 
