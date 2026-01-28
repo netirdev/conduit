@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,8 @@ const (
 	RestartBackoff = 5 * time.Second
 	// IdleTimeout is how long an instance can be idle before automatic restart
 	IdleTimeout = 1 * time.Hour
+	// ShutdownTimeout is the grace period before force-killing child processes
+	ShutdownTimeout = 2 * time.Second
 )
 
 // Compile regexes once at package initialization for performance
@@ -90,6 +93,7 @@ type MultiService struct {
 	instanceStats []*InstanceStats
 	cancel        context.CancelFunc
 	mu            sync.Mutex
+	wg            sync.WaitGroup // Tracks all goroutines (instance restarts + I/O readers)
 	startTime     time.Time
 	statsDone     chan struct{}
 }
@@ -162,7 +166,6 @@ func (m *MultiService) Run(ctx context.Context) error {
 	fmt.Printf("Starting %d Psiphon Conduit instances (Max Clients/instance: %d, Bandwidth: %s)\n",
 		m.numInstances, clientsPerInstance, bandwidthStr)
 
-	var wg sync.WaitGroup
 	errChan := make(chan error, m.numInstances)
 
 	for i := 0; i < m.numInstances; i++ {
@@ -172,9 +175,9 @@ func (m *MultiService) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to create instance directory: %w", err)
 		}
 
-		wg.Add(1)
+		m.wg.Add(1)
 		go func(idx int, dataDir string) {
-			defer wg.Done()
+			defer m.wg.Done()
 			restartCount := 0
 
 			for {
@@ -214,7 +217,7 @@ func (m *MultiService) Run(ctx context.Context) error {
 
 	go m.aggregateAndPrintStats(ctx)
 
-	wg.Wait()
+	m.wg.Wait()
 
 	// Cancel context to trigger final stats write
 	m.cancel()
@@ -283,19 +286,43 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 	m.processes[idx] = cmd
 	m.mu.Unlock()
 
+	// Monitor context cancellation for graceful shutdown with timeout
+	// CommandContext will signal the child when ctx is cancelled, but we also
+	// force-kill after ShutdownTimeout if it hasn't exited yet
 	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			fmt.Printf("[instance-%d] %s\n", idx, scanner.Text())
+		<-ctx.Done()
+		// Give process time to exit gracefully after receiving signal
+		time.Sleep(ShutdownTimeout)
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			// Force kill if still running after grace period
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
 		}
 	}()
 
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		m.parseInstanceOutput(idx, line)
-	}
+	// Stream stderr with prefix in background
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		scanner := newLargeBufferScanner(stderr)
+		for scanner.Scan() {
+			fmt.Fprintf(os.Stderr, "[instance-%d] %s\n", idx, scanner.Text())
+		}
+	}()
 
+	// Stream stdout and parse for stats
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		scanner := newLargeBufferScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			m.parseInstanceOutput(idx, line)
+		}
+	}()
+
+	// Wait for process to exit
 	return cmd.Wait()
 }
 
@@ -494,6 +521,15 @@ func (m *MultiService) Stop() {
 			m.processes[i] = nil
 		}
 	}
+}
+
+// newLargeBufferScanner creates a scanner with increased buffer size to handle long lines
+func newLargeBufferScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	// Increase buffer size to handle long lines (up to 1MB)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	return scanner
 }
 
 // CalculateInstances determines how many instances to run based on max clients
