@@ -96,6 +96,7 @@ type MultiService struct {
 	wg            sync.WaitGroup // Tracks all goroutines (instance restarts + I/O readers)
 	startTime     time.Time
 	statsDone     chan struct{}
+	statsChanged  chan struct{} // Signals when stats have changed
 }
 
 // AggregateStatsJSON represents the JSON structure for multi-instance stats
@@ -139,6 +140,7 @@ func NewMultiService(cfg *config.Config, numInstances int) (*MultiService, error
 		instanceStats: instanceStats,
 		startTime:     time.Now(),
 		statsDone:     make(chan struct{}),
+		statsChanged:  make(chan struct{}, 100), // Buffered to avoid blocking
 	}, nil
 }
 
@@ -357,21 +359,45 @@ func (m *MultiService) parseInstanceOutput(idx int, line string) {
 }
 
 func (m *MultiService) parseStatsLine(stats *InstanceStats, line string) {
+	changed := false
+
 	if match := connectingRe.FindStringSubmatch(line); len(match) > 1 {
 		if v, err := strconv.Atoi(match[1]); err == nil {
-			stats.Connecting = v
+			if stats.Connecting != v {
+				stats.Connecting = v
+				changed = true
+			}
 		}
 	}
 	if match := connectedRe.FindStringSubmatch(line); len(match) > 1 {
 		if v, err := strconv.Atoi(match[1]); err == nil {
-			stats.Connected = v
+			if stats.Connected != v {
+				stats.Connected = v
+				changed = true
+			}
 		}
 	}
 	if match := upRe.FindStringSubmatch(line); len(match) > 2 {
-		stats.BytesUp = parseByteValue(match[1], match[2])
+		newVal := parseByteValue(match[1], match[2])
+		if stats.BytesUp != newVal {
+			stats.BytesUp = newVal
+			changed = true
+		}
 	}
 	if match := downRe.FindStringSubmatch(line); len(match) > 2 {
-		stats.BytesDown = parseByteValue(match[1], match[2])
+		newVal := parseByteValue(match[1], match[2])
+		if stats.BytesDown != newVal {
+			stats.BytesDown = newVal
+			changed = true
+		}
+	}
+
+	if changed {
+		select {
+		case m.statsChanged <- struct{}{}:
+		default:
+			// Channel full, skip this signal (next change will trigger anyway)
+		}
 	}
 }
 
@@ -388,12 +414,9 @@ func parseByteValue(numStr, unit string) int64 {
 	return int64(val)
 }
 
-// aggregateAndPrintStats periodically prints combined stats from all instances
+// aggregateAndPrintStats prints combined stats when changes occur
 func (m *MultiService) aggregateAndPrintStats(ctx context.Context) {
 	defer close(m.statsDone)
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -401,7 +424,7 @@ func (m *MultiService) aggregateAndPrintStats(ctx context.Context) {
 			// Final stats write on shutdown
 			m.printAndWriteStats()
 			return
-		case <-ticker.C:
+		case <-m.statsChanged:
 			m.printAndWriteStats()
 		}
 	}
