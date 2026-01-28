@@ -39,6 +39,8 @@ import (
 const (
 	// ClientsPerInstance is the target number of clients per instance
 	ClientsPerInstance = 100
+	// BytesPerSecondToMbps converts bytes per second to megabits per second
+	BytesPerSecondToMbps = 1000 * 1000 / 8
 )
 
 // Compile regexes once at package initialization for performance
@@ -48,6 +50,17 @@ var (
 	upRe         = regexp.MustCompile(`Up:\s*([\d.]+)\s*([KMGTPE]?B)`)
 	downRe       = regexp.MustCompile(`Down:\s*([\d.]+)\s*([KMGTPE]?B)`)
 )
+
+// Byte unit multipliers for parsing human-readable byte values
+var byteMultipliers = map[string]float64{
+	"B":  1,
+	"KB": 1024,
+	"MB": 1024 * 1024,
+	"GB": 1024 * 1024 * 1024,
+	"TB": 1024 * 1024 * 1024 * 1024,
+	"PB": 1024 * 1024 * 1024 * 1024 * 1024,
+	"EB": 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
+}
 
 // InstanceStats tracks stats for a single instance
 type InstanceStats struct {
@@ -125,7 +138,7 @@ func (m *MultiService) Run(ctx context.Context) error {
 	var bandwidthPerInstance float64
 	if m.config.BandwidthBytesPerSecond > 0 {
 		bandwidthPerInstance = float64(m.config.BandwidthBytesPerSecond) / float64(m.numInstances)
-		bandwidthPerInstance = bandwidthPerInstance / 125000 // Convert to Mbps
+		bandwidthPerInstance = bandwidthPerInstance / BytesPerSecondToMbps // Convert to Mbps
 	} else {
 		bandwidthPerInstance = -1
 	}
@@ -308,17 +321,7 @@ func parseByteValue(numStr, unit string) int64 {
 		return 0
 	}
 
-	multipliers := map[string]float64{
-		"B":  1,
-		"KB": 1024,
-		"MB": 1024 * 1024,
-		"GB": 1024 * 1024 * 1024,
-		"TB": 1024 * 1024 * 1024 * 1024,
-		"PB": 1024 * 1024 * 1024 * 1024 * 1024,
-		"EB": 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
-	}
-
-	if mult, ok := multipliers[unit]; ok {
+	if mult, ok := byteMultipliers[unit]; ok {
 		return int64(val * mult)
 	}
 	return int64(val)
