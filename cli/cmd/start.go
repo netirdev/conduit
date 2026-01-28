@@ -37,7 +37,6 @@ var (
 	bandwidthMbps     float64
 	psiphonConfigPath string
 	statsFilePath     string
-	multiInstance     bool
 	numInstances      int
 )
 
@@ -65,8 +64,8 @@ func init() {
 	startCmd.Flags().Float64VarP(&bandwidthMbps, "bandwidth", "b", config.DefaultBandwidthMbps, "total bandwidth limit in Mbps (-1 for unlimited)")
 	startCmd.Flags().StringVarP(&statsFilePath, "stats-file", "s", "", "persist stats to JSON file (-s for default, -s=path or --stats-file=path for custom)")
 	startCmd.Flags().Lookup("stats-file").NoOptDefVal = "stats.json"
-	startCmd.Flags().BoolVar(&multiInstance, "multi-instance", false, "run multiple instances (1 per 100 max-clients)")
-	startCmd.Flags().IntVar(&numInstances, "instances", 0, "number of instances (0 = auto-calculate based on max-clients)")
+	startCmd.Flags().IntVar(&numInstances, "multi-instance", 0, "run multiple instances: 0=single (default), N=N instances, or no value=auto (1 per 50 clients, max 32)")
+	startCmd.Flags().Lookup("multi-instance").NoOptDefVal = "-1" // -1 means auto-calculate
 
 	// Only show --psiphon-config flag if no config is embedded
 	if !config.HasEmbeddedConfig() {
@@ -127,11 +126,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Multi-instance mode: spawn subprocesses
-	if multiInstance || numInstances > 0 {
+	if numInstances != 0 {
 		instances := numInstances
-		if instances <= 0 {
+		if instances < 0 {
 			instances = conduit.CalculateInstances(maxClients)
 		}
+		if instances > conduit.MaxInstances {
+			return fmt.Errorf("too many instances: %d (maximum: %d)", instances, conduit.MaxInstances)
+		}
+
 		multiService, err := conduit.NewMultiService(cfg, instances)
 		if err != nil {
 			return fmt.Errorf("failed to create multi-instance service: %w", err)

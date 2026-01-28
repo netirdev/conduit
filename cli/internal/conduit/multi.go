@@ -38,7 +38,9 @@ import (
 
 const (
 	// ClientsPerInstance is the target number of clients per instance
-	ClientsPerInstance = 100
+	ClientsPerInstance = 50
+	// MaxInstances is the maximum number of instances allowed
+	MaxInstances = 32
 	// BytesPerSecondToMbps converts bytes per second to megabits per second
 	BytesPerSecondToMbps = 1000 * 1000 / 8
 )
@@ -444,9 +446,8 @@ func CalculateInstances(maxClients int) int {
 	if instances < 1 {
 		instances = 1
 	}
-	// Cap at reasonable maximum
-	if instances > 10 {
-		instances = 10
+	if instances > MaxInstances {
+		instances = MaxInstances
 	}
 	return instances
 }
