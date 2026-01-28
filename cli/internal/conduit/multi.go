@@ -171,7 +171,7 @@ func (m *MultiService) Run(ctx context.Context) error {
 	errChan := make(chan error, m.numInstances)
 
 	for i := 0; i < m.numInstances; i++ {
-		instanceDataDir := filepath.Join(m.config.DataDir, fmt.Sprintf("instance-%d", i))
+		instanceDataDir := filepath.Join(m.config.DataDir, fmt.Sprintf("%d", i))
 
 		if err := os.MkdirAll(instanceDataDir, 0700); err != nil {
 			return fmt.Errorf("failed to create instance directory: %w", err)
