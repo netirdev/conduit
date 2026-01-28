@@ -106,6 +106,15 @@ jobs:
       - name: Remove Psiphon config
         run: rm -f psiphon_config.json
 
+      - name: Delete existing experimental release if it exists
+        if: inputs.pr_number != ''
+        continue-on-error: true
+        working-directory: .
+        run: |
+          gh release delete ${{ steps.version.outputs.VERSION }} --yes --cleanup-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -113,6 +122,7 @@ jobs:
           name: ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && format('Conduit CLI {0} (Experimental)', steps.version.outputs.VERSION) || format('Conduit CLI {0}', steps.version.outputs.VERSION) }}
           draft: false
           prerelease: ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' }}
+          make_latest: ${{ steps.version.outputs.IS_EXPERIMENTAL == 'false' }}
           files: |
             cli/dist/conduit-linux-amd64
             cli/dist/conduit-linux-arm64
