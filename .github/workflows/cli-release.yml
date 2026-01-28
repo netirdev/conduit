@@ -2,6 +2,11 @@ name: CLI Release
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number for experimental release (leave empty for regular release)'
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -19,10 +24,28 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set version from commit hash
+      - name: Fetch PR branch if experimental release
+        if: inputs.pr_number != ''
+        working-directory: .
+        run: |
+          gh pr checkout ${{ inputs.pr_number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set version
+        working-directory: .
         id: version
-        run: echo "VERSION=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        run: |
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            echo "VERSION=experimental-pr${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
+            echo "IS_EXPERIMENTAL=true" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+            echo "IS_EXPERIMENTAL=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Go 1.24.3
         uses: actions/setup-go@v5
@@ -78,7 +101,7 @@ jobs:
             PSIPHON_CONFIG=psiphon_config.json
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'false' && format('{0}/{1}:latest', env.REGISTRY, env.IMAGE_NAME) || '' }}
 
       - name: Remove Psiphon config
         run: rm -f psiphon_config.json
@@ -87,9 +110,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: Conduit CLI ${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && format('Conduit CLI {0} (Experimental)', steps.version.outputs.VERSION) || format('Conduit CLI {0}', steps.version.outputs.VERSION) }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' }}
           files: |
             cli/dist/conduit-linux-amd64
             cli/dist/conduit-linux-arm64
@@ -99,9 +122,8 @@ jobs:
             cli/dist/conduit-freebsd-amd64
             cli/dist/checksums.txt
           body: |
-            ## Conduit CLI ${{ steps.version.outputs.VERSION }}
-
-            Conduit is a volunteer-run proxy node that helps relay traffic for users in censored regions.
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '## ⚠️ Experimental Release\n\nThis is an experimental release built from PR #' || '## Conduit CLI ' }}${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && inputs.pr_number || steps.version.outputs.VERSION }}
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '\n**Warning:** This build is for testing purposes only. Use at your own risk.\n\n---\n' || '\nConduit is a volunteer-run proxy node that helps relay traffic for users in censored regions.\n' }}
 
             ### Downloads
 
