@@ -30,15 +30,18 @@ import (
 	"time"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
+	"github.com/Psiphon-Inc/conduit/cli/internal/geo"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/inproxy"
 )
 
 // Service represents the Conduit inproxy service
 type Service struct {
-	config     *config.Config
-	controller *psiphon.Controller
-	stats      *Stats
-	mu         sync.RWMutex
+	config       *config.Config
+	controller   *psiphon.Controller
+	stats        *Stats
+	geoCollector *geo.Collector
+	mu           sync.RWMutex
 }
 
 // Stats tracks proxy activity statistics
@@ -53,13 +56,14 @@ type Stats struct {
 
 // StatsJSON represents the JSON structure for persisted stats
 type StatsJSON struct {
-	ConnectingClients int    `json:"connectingClients"`
-	ConnectedClients  int    `json:"connectedClients"`
-	TotalBytesUp      int64  `json:"totalBytesUp"`
-	TotalBytesDown    int64  `json:"totalBytesDown"`
-	UptimeSeconds     int64  `json:"uptimeSeconds"`
-	IsLive            bool   `json:"isLive"`
-	Timestamp         string `json:"timestamp"`
+	ConnectingClients int          `json:"connectingClients"`
+	ConnectedClients  int          `json:"connectedClients"`
+	TotalBytesUp      int64        `json:"totalBytesUp"`
+	TotalBytesDown    int64        `json:"totalBytesDown"`
+	UptimeSeconds     int64        `json:"uptimeSeconds"`
+	IsLive            bool         `json:"isLive"`
+	Geo               []geo.Result `json:"geo,omitempty"`
+	Timestamp         string       `json:"timestamp"`
 }
 
 // New creates a new Conduit service
@@ -74,6 +78,17 @@ func New(cfg *config.Config) (*Service, error) {
 
 // Run starts the Conduit inproxy service and blocks until context is cancelled
 func (s *Service) Run(ctx context.Context) error {
+	if s.config.GeoEnabled {
+		dbPath := s.config.DataDir + "/GeoLite2-Country.mmdb"
+		s.geoCollector = geo.NewCollector(dbPath)
+		if err := s.geoCollector.Start(ctx); err != nil {
+			fmt.Printf("[WARN] Geo disabled: %v\n", err)
+			s.geoCollector = nil
+		} else {
+			fmt.Println("[GEO] Tracking enabled")
+		}
+	}
+
 	// Set up notice handling FIRST - before any psiphon calls
 	psiphon.SetNoticeWriter(psiphon.NewNoticeReceiver(
 		func(notice []byte) {
@@ -176,6 +191,30 @@ func (s *Service) createPsiphonConfig() (*psiphon.Config, error) {
 	// Commit the config
 	if err := psiphonConfig.Commit(true); err != nil {
 		return nil, fmt.Errorf("failed to commit config: %w", err)
+	}
+
+	// Set up geo tracking callback if enabled
+	if s.geoCollector != nil {
+		psiphonConfig.OnInproxyConnectionEstablished = func(local, remote inproxy.ConnectionStats) {
+			if remote.IP == "" {
+				return
+			}
+			if remote.CandidateType == "relay" {
+				s.geoCollector.ConnectRelay(remote.IP)
+			} else {
+				s.geoCollector.ConnectIP(remote.IP)
+			}
+		}
+		psiphonConfig.OnInproxyConnectionClosed = func(remote *inproxy.ConnectionStats, bw *inproxy.BandwidthStats) {
+			if remote == nil || remote.IP == "" || bw == nil {
+				return
+			}
+			if remote.CandidateType == "relay" {
+				s.geoCollector.DisconnectRelay(remote.IP, bw.BytesUp, bw.BytesDown)
+			} else {
+				s.geoCollector.DisconnectIP(remote.IP, bw.BytesUp, bw.BytesDown)
+			}
+		}
 	}
 
 	return psiphonConfig, nil
@@ -337,6 +376,9 @@ func (s *Service) logStats() {
 			UptimeSeconds:     int64(time.Since(s.stats.StartTime).Seconds()),
 			IsLive:            s.stats.IsLive,
 			Timestamp:         time.Now().Format(time.RFC3339),
+		}
+		if s.geoCollector != nil {
+			statsJSON.Geo = s.geoCollector.GetResults()
 		}
 		go s.writeStatsToFile(statsJSON)
 	}

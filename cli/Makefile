@@ -18,8 +18,9 @@ GOPATH := $(shell go env GOPATH)
 GO := $(shell which go$(GO_INSTALL_VERSION) 2>/dev/null || which go1.24 2>/dev/null || echo "$(GOPATH)/bin/go$(GO_INSTALL_VERSION)")
 
 # Psiphon tunnel-core branch with inproxy support
-PSIPHON_BRANCH ?= staging-client
-PSIPHON_REPO := https://github.com/Psiphon-Labs/psiphon-tunnel-core.git
+# Using ssmirr fork with OnConnectionEstablished callback until upstreamed
+PSIPHON_BRANCH ?= feat/inproxy-client-connected-callback
+PSIPHON_REPO := https://github.com/ssmirr/psiphon-tunnel-core.git
 
 # Compute build-info and invoke go build:
 # $(1) = output path
