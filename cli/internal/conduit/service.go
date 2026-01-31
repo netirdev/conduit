@@ -31,6 +31,7 @@ import (
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
 	"github.com/Psiphon-Inc/conduit/cli/internal/geo"
+	"github.com/Psiphon-Inc/conduit/cli/internal/metrics"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/inproxy"
 )
@@ -41,6 +42,7 @@ type Service struct {
 	controller   *psiphon.Controller
 	stats        *Stats
 	geoCollector *geo.Collector
+	metrics      *metrics.Metrics
 	mu           sync.RWMutex
 }
 
@@ -51,7 +53,8 @@ type Stats struct {
 	TotalBytesUp      int64
 	TotalBytesDown    int64
 	StartTime         time.Time
-	IsLive            bool // Connected to broker and ready to accept clients
+	LastActiveTime    time.Time // Last time there was at least one client (connecting or connected)
+	IsLive            bool      // Connected to broker and ready to accept clients
 }
 
 // StatsJSON represents the JSON structure for persisted stats
@@ -61,6 +64,7 @@ type StatsJSON struct {
 	TotalBytesUp      int64        `json:"totalBytesUp"`
 	TotalBytesDown    int64        `json:"totalBytesDown"`
 	UptimeSeconds     int64        `json:"uptimeSeconds"`
+	IdleSeconds       int64        `json:"idleSeconds"`
 	IsLive            bool         `json:"isLive"`
 	Geo               []geo.Result `json:"geo,omitempty"`
 	Timestamp         string       `json:"timestamp"`
@@ -68,12 +72,22 @@ type StatsJSON struct {
 
 // New creates a new Conduit service
 func New(cfg *config.Config) (*Service, error) {
-	return &Service{
+	s := &Service{
 		config: cfg,
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
-	}, nil
+	}
+
+	if cfg.MetricsAddr != "" {
+		s.metrics = metrics.New(metrics.GaugeFuncs{
+			GetUptimeSeconds: s.getUptimeSeconds,
+			GetIdleSeconds:   s.getIdleSecondsFloat,
+		})
+		s.metrics.SetConfig(cfg.MaxClients, cfg.BandwidthBytesPerSecond)
+	}
+
+	return s, nil
 }
 
 // Run starts the Conduit inproxy service and blocks until context is cancelled
@@ -89,18 +103,44 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 
+	if s.metrics != nil && s.config.MetricsAddr != "" {
+		if err := s.metrics.StartServer(s.config.MetricsAddr); err != nil {
+			return fmt.Errorf("failed to start metrics server: %w", err)
+		}
+
+		fmt.Printf("Prometheus metrics available at http://%s/metrics\n", s.config.MetricsAddr)
+
+		// Ensure metrics server is shut down when we're done
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := s.metrics.Shutdown(ctx); err != nil {
+				fmt.Printf("[ERROR] Failed to shutdown metrics server: %v\n", err)
+			}
+		}()
+	}
+
 	// Set up notice handling FIRST - before any psiphon calls
-	psiphon.SetNoticeWriter(psiphon.NewNoticeReceiver(
+	if err := psiphon.SetNoticeWriter(psiphon.NewNoticeReceiver(
 		func(notice []byte) {
 			s.handleNotice(notice)
 		},
-	))
+	)); err != nil {
+		return fmt.Errorf("failed to set notice writer: %w", err)
+	}
 
 	// Create Psiphon configuration
 	psiphonConfig, err := s.createPsiphonConfig()
 	if err != nil {
 		return fmt.Errorf("failed to create psiphon config: %w", err)
 	}
+
+	bandwidthStr := "unlimited"
+	if s.config.BandwidthBytesPerSecond > 0 {
+		bandwidthStr = fmt.Sprintf("%.0f Mbps", float64(s.config.BandwidthBytesPerSecond)*8/1000/1000)
+	}
+	fmt.Printf("Starting Psiphon Conduit (Max Clients: %d, Bandwidth: %s)\n", s.config.MaxClients, bandwidthStr)
 
 	// Open the data store
 	err = psiphon.OpenDataStore(&psiphon.Config{
@@ -220,6 +260,43 @@ func (s *Service) createPsiphonConfig() (*psiphon.Config, error) {
 	return psiphonConfig, nil
 }
 
+// updateMetrics updates the metrics from the stats
+func (s *Service) updateMetrics() {
+	if s.metrics == nil {
+		return
+	}
+
+	s.metrics.SetConnectingClients(s.stats.ConnectingClients)
+	s.metrics.SetConnectedClients(s.stats.ConnectedClients)
+	s.metrics.SetBytesUploaded(float64(s.stats.TotalBytesUp))
+	s.metrics.SetBytesDownloaded(float64(s.stats.TotalBytesDown))
+}
+
+// getUptimeSeconds returns the uptime in seconds (thread-safe, for Prometheus scrape)
+func (s *Service) getUptimeSeconds() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Since(s.stats.StartTime).Seconds()
+}
+
+// getIdleSecondsFloat returns how long the proxy has been idle (thread-safe, for Prometheus scrape)
+func (s *Service) getIdleSecondsFloat() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calcIdleSeconds()
+}
+
+// calcIdleSeconds calculates idle time. Must be called with lock held.
+func (s *Service) calcIdleSeconds() float64 {
+	if s.stats.ConnectingClients > 0 || s.stats.ConnectedClients > 0 {
+		return 0
+	}
+	if s.stats.LastActiveTime.IsZero() {
+		return time.Since(s.stats.StartTime).Seconds()
+	}
+	return time.Since(s.stats.LastActiveTime).Seconds()
+}
+
 // handleNotice processes notices from psiphon-tunnel-core
 func (s *Service) handleNotice(notice []byte) {
 	var noticeData struct {
@@ -249,10 +326,19 @@ func (s *Service) handleNotice(notice []byte) {
 		if v, ok := noticeData.Data["bytesDown"].(float64); ok {
 			s.stats.TotalBytesDown += int64(v)
 		}
+
+		// Track last active time for idle calculation
+		if s.stats.ConnectingClients > 0 || s.stats.ConnectedClients > 0 {
+			s.stats.LastActiveTime = time.Now()
+		}
+
 		// Log if client counts changed
 		if s.stats.ConnectingClients != prevConnecting || s.stats.ConnectedClients != prevConnected {
 			s.logStats()
 		}
+
+		s.updateMetrics()
+
 		s.mu.Unlock()
 
 	case "InproxyProxyTotalActivity":
@@ -272,10 +358,19 @@ func (s *Service) handleNotice(notice []byte) {
 		if v, ok := noticeData.Data["totalBytesDown"].(float64); ok {
 			s.stats.TotalBytesDown = int64(v)
 		}
+
+		// Track last active time for idle calculation
+		if s.stats.ConnectingClients > 0 || s.stats.ConnectedClients > 0 {
+			s.stats.LastActiveTime = time.Now()
+		}
+
 		// Log if client counts changed
 		if s.stats.ConnectingClients != prevConnecting || s.stats.ConnectedClients != prevConnected {
 			s.logStats()
 		}
+
+		s.updateMetrics()
+
 		s.mu.Unlock()
 
 	case "Info":
@@ -285,6 +380,9 @@ func (s *Service) handleNotice(notice []byte) {
 				s.mu.Lock()
 				if !s.stats.IsLive {
 					s.stats.IsLive = true
+					if s.metrics != nil {
+						s.metrics.SetIsLive(true)
+					}
 					s.mu.Unlock()
 					fmt.Println("[OK] Connected to Psiphon network")
 				} else {
@@ -343,7 +441,7 @@ func isNoisyError(errMsg string) bool {
 	// "no match" - no client was waiting
 	// "announcement" - general announcement-related errors
 	// "502" / "503" / "504" - transient broker/gateway errors
-	if len(errMsg) > 7 && errMsg[:7] == "inproxy" {
+	if strings.HasPrefix(errMsg, "inproxy") {
 		return strings.Contains(errMsg, "limited") ||
 			strings.Contains(errMsg, "no match") ||
 			strings.Contains(errMsg, "announcement") ||
@@ -374,6 +472,7 @@ func (s *Service) logStats() {
 			TotalBytesUp:      s.stats.TotalBytesUp,
 			TotalBytesDown:    s.stats.TotalBytesDown,
 			UptimeSeconds:     int64(time.Since(s.stats.StartTime).Seconds()),
+			IdleSeconds:       int64(s.calcIdleSeconds()),
 			IsLive:            s.stats.IsLive,
 			Timestamp:         time.Now().Format(time.RFC3339),
 		}
