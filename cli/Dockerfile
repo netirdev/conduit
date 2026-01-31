@@ -1,14 +1,16 @@
-# Conduit - Psiphon inproxy node
+# Conduit - Psiphon inproxy node (Debian)
 #
-# Build:
-#   docker build -t conduit --build-arg PSIPHON_CONFIG=psiphon_config.json -f Dockerfile.embedded .
+# Build with embedded config:
+#   make docker PSIPHON_CONFIG=psiphon_config.json
 #
-# Run (with persistent data volume - recommended):
-#   docker run -d --name conduit -v conduit-data:/home/conduit/data --restart unless-stopped conduit
+# Or build image only (after binaries exist in dist/):
+#   docker build -t conduit:latest -f Dockerfile .
 #
-# The data volume stores your proxy's private key. The Psiphon broker tracks
-# proxy reputation by key, so preserving it ensures you continue receiving
-# client connections.
+# Run with persistent data volume:
+#   docker run -d --name conduit \
+#     -v conduit-data:/home/conduit/data \
+#     --restart unless-stopped \
+#     conduit:latest
 
 FROM debian:bookworm-slim
 

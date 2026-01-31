@@ -1,4 +1,4 @@
-.PHONY: setup build build-embedded build-all build-all-embedded clean test fmt lint deps check-go
+.PHONY: setup build build-embedded build-all build-all-embedded clean test fmt lint deps check-go docker docker-distroless
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS_VERSION := -X github.com/Psiphon-Inc/conduit/cli/cmd.version=$(VERSION)
@@ -180,6 +180,33 @@ clean-all: clean
 install: check-go check-setup
 	$(GO) install -tags "$(BASE_TAGS)" -ldflags "$(LDFLAGS_VERSION)" .
 
+# Docker image name
+DOCKER_IMAGE ?= conduit
+
+# Build Docker images with embedded config (requires PSIPHON_CONFIG)
+docker: check-psiphon-config
+	@echo "Building embedded binaries..."
+	@cp "$(PSIPHON_CONFIG)" internal/config/psiphon_config.json
+	$(call GO_BUILD,dist/conduit-linux-amd64,$(EMBED_TAG),linux,amd64)
+	$(call GO_BUILD,dist/conduit-linux-arm64,$(EMBED_TAG),linux,arm64)
+	@rm -f internal/config/psiphon_config.json
+	@echo "Building Debian Docker image..."
+	docker build -t $(DOCKER_IMAGE):latest -f Dockerfile .
+	@echo "Built $(DOCKER_IMAGE):latest"
+	@echo "Building Distroless Docker image..."
+	docker build -t $(DOCKER_IMAGE):distroless -f Dockerfile.distroless .
+	@echo "Built $(DOCKER_IMAGE):distroless"
+
+docker-distroless: check-psiphon-config
+	@echo "Building embedded binaries..."
+	@cp "$(PSIPHON_CONFIG)" internal/config/psiphon_config.json
+	$(call GO_BUILD,dist/conduit-linux-amd64,$(EMBED_TAG),linux,amd64)
+	$(call GO_BUILD,dist/conduit-linux-arm64,$(EMBED_TAG),linux,arm64)
+	@rm -f internal/config/psiphon_config.json
+	@echo "Building Distroless Docker image..."
+	docker build -t $(DOCKER_IMAGE):distroless -f Dockerfile.distroless .
+	@echo "Built $(DOCKER_IMAGE):distroless"
+
 # Show help
 help:
 	@echo "Conduit CLI - Makefile targets:"
@@ -193,6 +220,11 @@ help:
 	@echo "  deps               Download dependencies"
 	@echo "  clean              Remove build artifacts"
 	@echo "  clean-all          Remove build artifacts and psiphon-tunnel-core"
+	@echo ""
+	@echo "Docker (requires PSIPHON_CONFIG):"
+	@echo "  docker             Build both Debian and Distroless images with embedded config"
+	@echo "  docker-distroless  Build Distroless image only (~30MB, minimal)"
+	@echo "  Example: make docker PSIPHON_CONFIG=psiphon_config.json"
 	@echo ""
 	@echo "Embedded builds:"
 	@echo "  make build-embedded PSIPHON_CONFIG=path/to/config.json"

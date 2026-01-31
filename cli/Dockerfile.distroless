@@ -1,0 +1,27 @@
+# Conduit - Psiphon inproxy node (Distroless)
+#
+# Minimal distroless image for maximum security and smallest size.
+# Uses static binaries (CGO_ENABLED=0) so no glibc needed.
+#
+# Build with embedded config:
+#   make docker PSIPHON_CONFIG=psiphon_config.json
+#
+# Or build image only (after binaries exist in dist/):
+#   docker build -t conduit:distroless -f Dockerfile.distroless .
+#
+# Run with persistent data volume:
+#   docker run -d --name conduit \
+#     -v conduit-data:/data \
+#     --restart unless-stopped \
+#     conduit:distroless
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+COPY dist/conduit-linux-${TARGETARCH} /conduit
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/conduit"]
+CMD ["start", "--data-dir", "/data"]
